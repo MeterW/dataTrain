@@ -5,6 +5,11 @@ import sqlite3
 from datetime import datetime, timedelta
 import time
 import os
+import sys
+
+# Force unbuffered output for GitHub Actions
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 # Configuration from environment variables
 API_TOKEN = os.environ.get('DERIV_API_TOKEN', 'YOUR_API_TOKEN_HERE')
@@ -68,29 +73,54 @@ class DateRangeTicksFetcher:
     async def get_evenodd_symbols(self):
         """Get symbols that support even/odd"""
         return [
+            # Bear/Bull Market Indices
+            {'symbol': 'RDBEAR', 'display_name': 'Bear Market Index'},
+            {'symbol': 'RDBULL', 'display_name': 'Bull Market Index'},
+            
+            # Jump Indices
+            {'symbol': 'JD10', 'display_name': 'Jump 10 Index'},
+            {'symbol': 'JD25', 'display_name': 'Jump 25 Index'},
+            {'symbol': 'JD50', 'display_name': 'Jump 50 Index'},
+            {'symbol': 'JD75', 'display_name': 'Jump 75 Index'},
+            {'symbol': 'JD100', 'display_name': 'Jump 100 Index'},
+            
+            # Volatility Indices (1s)
+            {'symbol': '1HZ10V', 'display_name': 'Volatility 10 (1s) Index'},
+            {'symbol': '1HZ15V', 'display_name': 'Volatility 15 (1s) Index'},
+            {'symbol': '1HZ25V', 'display_name': 'Volatility 25 (1s) Index'},
+            {'symbol': '1HZ30V', 'display_name': 'Volatility 30 (1s) Index'},
+            {'symbol': '1HZ50V', 'display_name': 'Volatility 50 (1s) Index'},
+            {'symbol': '1HZ75V', 'display_name': 'Volatility 75 (1s) Index'},
+            {'symbol': '1HZ90V', 'display_name': 'Volatility 90 (1s) Index'},
+            {'symbol': '1HZ100V', 'display_name': 'Volatility 100 (1s) Index'},
+            
+            # Volatility Indices (standard)
             {'symbol': 'R_10', 'display_name': 'Volatility 10 Index'},
             {'symbol': 'R_25', 'display_name': 'Volatility 25 Index'},
             {'symbol': 'R_50', 'display_name': 'Volatility 50 Index'},
             {'symbol': 'R_75', 'display_name': 'Volatility 75 Index'},
             {'symbol': 'R_100', 'display_name': 'Volatility 100 Index'},
-            {'symbol': '1HZ10V', 'display_name': 'Volatility 10 (1s) Index'},
-            {'symbol': '1HZ25V', 'display_name': 'Volatility 25 (1s) Index'},
-            {'symbol': '1HZ50V', 'display_name': 'Volatility 50 (1s) Index'},
-            {'symbol': '1HZ75V', 'display_name': 'Volatility 75 (1s) Index'},
-            {'symbol': '1HZ100V', 'display_name': 'Volatility 100 (1s) Index'},
         ]
     
     async def fetch_ticks_for_period(self, symbol):
         """Fetch ticks for a specific time period"""
-        print(f"Fetching {symbol}...")
+        start_fetch_time = time.time()
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Fetching {symbol}...", flush=True)
         
         all_ticks = []
         current_end = self.end_time
         pip_size = 2
         batch_count = 0
+        last_progress_time = time.time()
         
         while current_end > self.start_time:
             batch_count += 1
+            
+            # Progress update every 30 seconds
+            if time.time() - last_progress_time > 30:
+                elapsed = time.time() - start_fetch_time
+                print(f"  [{symbol}] Still fetching... {batch_count} batches, {len(all_ticks)} ticks, {elapsed:.0f}s elapsed", flush=True)
+                last_progress_time = time.time()
             
             await self.ws.send(json.dumps({
                 "ticks_history": symbol,
@@ -104,15 +134,15 @@ class DateRangeTicksFetcher:
             try:
                 response = json.loads(await self.ws.recv())
             except Exception as e:
-                print(f"  ✗ Connection error: {e}")
+                print(f"  ✗ Connection error: {e}", flush=True)
                 break
             
             if response.get('error'):
-                print(f"  ✗ Error: {response['error']['message']}")
+                print(f"  ✗ Error: {response['error']['message']}", flush=True)
                 break
             
             if 'history' not in response:
-                print(f"  ✗ No history data")
+                print(f"  ✗ No history data", flush=True)
                 break
             
             history = response['history']
@@ -134,7 +164,10 @@ class DateRangeTicksFetcher:
                     })
             
             oldest_time = datetime.fromtimestamp(times[0]).strftime('%Y-%m-%d %H:%M:%S')
-            print(f"  Batch {batch_count}: {len(times)} ticks (oldest: {oldest_time})")
+            
+            # Print progress every 10 batches
+            if batch_count % 10 == 0:
+                print(f"  [{symbol}] Batch {batch_count}: {len(all_ticks)} total ticks (oldest: {oldest_time})", flush=True)
             
             oldest_epoch = times[0]
             if oldest_epoch <= self.start_time:
@@ -143,7 +176,8 @@ class DateRangeTicksFetcher:
             current_end = oldest_epoch - 1
             await asyncio.sleep(0.3)
         
-        print(f"  ✓ Total: {len(all_ticks)} ticks for {symbol} ({batch_count} batches)\n")
+        elapsed = time.time() - start_fetch_time
+        print(f"  ✓ {symbol}: {len(all_ticks)} ticks in {batch_count} batches ({elapsed:.1f}s)\n", flush=True)
         return all_ticks
     
     def check_existing_data(self):
@@ -249,40 +283,57 @@ class DateRangeTicksFetcher:
     
     async def fetch_all(self):
         """Fetch all ticks for the specified period"""
+        overall_start = time.time()
+        
         # Check existing data
         existing = self.check_existing_data()
         if existing:
-            print("⚠️  Database already exists with data:")
+            print("⚠️  Database already exists with data:", flush=True)
             for symbol, info in existing.items():
-                print(f"  {symbol}: {info['count']} ticks ({info['oldest']} to {info['newest']})")
-            print()
+                print(f"  {symbol}: {info['count']} ticks ({info['oldest']} to {info['newest']})", flush=True)
+            print(flush=True)
         
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Connecting to Deriv API...", flush=True)
         await self.connect()
         self.setup_database()
         
         symbols = await self.get_evenodd_symbols()
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting fetch for {len(symbols)} symbols\n", flush=True)
         
         total_ticks = 0
-        for symbol_info in symbols:
+        for idx, symbol_info in enumerate(symbols, 1):
             symbol = symbol_info['symbol']
+            print(f"[{idx}/{len(symbols)}] Processing {symbol}...", flush=True)
+            
             ticks = await self.fetch_ticks_for_period(symbol)
             
             if ticks:
                 rows = self.save_ticks_to_db(ticks)
                 total_ticks += len(ticks)
-                print(f"  ✓ Saved {rows} new ticks ({len(ticks) - rows} duplicates skipped)\n")
+                print(f"  ✓ Saved {rows} new ticks ({len(ticks) - rows} duplicates skipped)", flush=True)
+                
+                # Show overall progress
+                elapsed = time.time() - overall_start
+                avg_time_per_symbol = elapsed / idx
+                remaining_symbols = len(symbols) - idx
+                eta_seconds = avg_time_per_symbol * remaining_symbols
+                eta_minutes = eta_seconds / 60
+                
+                print(f"  Progress: {idx}/{len(symbols)} symbols | Total ticks: {total_ticks:,} | ETA: {eta_minutes:.1f}m\n", flush=True)
             
             await asyncio.sleep(0.5)
         
         await self.ws.close()
         
-        print(f"\n{'='*70}")
-        print(f"✓ COMPLETE!")
-        print(f"{'='*70}")
-        print(f"Period: {self.start_dt.strftime('%Y-%m-%d')} to {self.end_dt.strftime('%Y-%m-%d')}")
-        print(f"Total ticks fetched: {total_ticks}")
-        print(f"Database: {self.db_path}")
-        print(f"{'='*70}\n")
+        elapsed_total = time.time() - overall_start
+        print(f"\n{'='*70}", flush=True)
+        print(f"✓ COMPLETE!", flush=True)
+        print(f"{'='*70}", flush=True)
+        print(f"Period: {self.start_dt.strftime('%Y-%m-%d')} to {self.end_dt.strftime('%Y-%m-%d')}", flush=True)
+        print(f"Total ticks fetched: {total_ticks:,}", flush=True)
+        print(f"Time taken: {elapsed_total/60:.1f} minutes", flush=True)
+        print(f"Database: {self.db_path}", flush=True)
+        print(f"{'='*70}\n", flush=True)
 
 async def main():
     # Check if using explicit dates or weeks_ago
