@@ -52,8 +52,11 @@ jobs:
         START_DATE: ${{ github.event.inputs.start_date }}
         END_DATE: ${{ github.event.inputs.end_date }}
         WEEKS_AGO: ${{ github.event.inputs.weeks_ago }}
+        PYTHONUNBUFFERED: 1
       run: |
-        python weekly_data.py
+        echo "Starting fetch at $(date)"
+        python -u weekly_data.py
+        echo "Fetch completed at $(date)"
     
     - name: Get database filename
       id: db_name
