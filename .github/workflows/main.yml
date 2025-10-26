@@ -1,0 +1,84 @@
+name: Fetch Deriv Ticks - Fixed Date Range
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Start date (YYYY-MM-DD) INCLUSIVE - leave empty to use weeks_ago'
+        required: false
+        type: string
+      end_date:
+        description: 'End date (YYYY-MM-DD) EXCLUSIVE - fetches UP TO but NOT including this date'
+        required: false
+        type: string
+      weeks_ago:
+        description: 'Weeks ago (if not using dates): 0=current, 1=last week, 2=2 weeks ago'
+        required: false
+        default: '1'
+        type: string
+
+jobs:
+  fetch-ticks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install websockets
+    
+    - name: Display date range
+      run: |
+        if [ -n "${{ github.event.inputs.start_date }}" ]; then
+          echo "Using explicit date range:"
+          echo "  Start: ${{ github.event.inputs.start_date }}"
+          echo "  End: ${{ github.event.inputs.end_date }}"
+        else
+          echo "Using weeks_ago: ${{ github.event.inputs.weeks_ago }}"
+        fi
+    
+    - name: Fetch ticks
+      env:
+        DERIV_API_TOKEN: ${{ secrets.DERIV_API_TOKEN }}
+        START_DATE: ${{ github.event.inputs.start_date }}
+        END_DATE: ${{ github.event.inputs.end_date }}
+        WEEKS_AGO: ${{ github.event.inputs.weeks_ago }}
+      run: |
+        python weekly_data.py
+    
+    - name: Get database filename
+      id: db_name
+      run: |
+        DB_FILE=$(ls deriv_ticks_*.sqlite | head -1)
+        echo "db_file=$DB_FILE" >> $GITHUB_OUTPUT
+        echo "Found database: $DB_FILE"
+    
+    - name: Upload database artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ steps.db_name.outputs.db_file }}
+        path: deriv_ticks_*.sqlite
+        retention-days: 90
+    
+    - name: Show database info
+      run: |
+        DB_FILE=$(ls deriv_ticks_*.sqlite | head -1)
+        echo "Database created: $DB_FILE"
+        echo "Size: $(du -h $DB_FILE | cut -f1)"
+        
+        # Show metadata
+        sqlite3 $DB_FILE "SELECT * FROM metadata;"
+        
+        # Show tick counts per symbol
+        echo ""
+        echo "Tick counts by symbol:"
+        sqlite3 $DB_FILE "SELECT symbol, COUNT(*) as count, MIN(epoch) as oldest, MAX(epoch) as newest FROM ticks GROUP BY symbol;"
