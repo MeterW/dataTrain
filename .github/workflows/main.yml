@@ -63,7 +63,7 @@ jobs:
         echo "Found database: $DB_FILE"
     
     - name: Upload database artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.db_name.outputs.db_file }}
         path: deriv_ticks_*.sqlite
